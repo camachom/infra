@@ -1,5 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb"
+import UAParser from "ua-parser-js"
 
 import { FirehoseClient, PutRecordCommand } from "@aws-sdk/client-firehose"
 
@@ -43,6 +44,15 @@ export const handler = async (event) => {
         payload
     }
 
+    try {
+        const ua = new UAParser(record.ua)
+        record.browser = ua.getBrowser()?.name || 'Unknown'
+        record.device = ua.getDevice()?.type || 'Unknown'
+        record.os = ua.getOS()?.name || 'Unknown'
+    } catch (err) {
+        console.warn("UAParser failed", { ua: record.ua, error: err?.message, requestId: record.requestId })
+    }
+
     await Promise.all([
         putFirehose(record),
         updateStats(record)
@@ -75,7 +85,14 @@ const putFirehose = async (record) => {
 }
 
 const updateStats = async (record) => {
-    const promises = [updateDailyCounter(), addEvent(record)]
+    const promises = [
+        updateDailyCounter(),
+        addEvent(record),
+        updateCounter('os', record.os),
+        updateCounter('browser', record.browser),
+        updateCounter('device', record.device),
+    ]
+
     if (record.referer) {
         promises.push(updatePageCounter(record))
     }
@@ -129,6 +146,24 @@ const addEvent = async (record) => {
                 ...record,
                 ttl: ttl
             },
+        })
+    )
+}
+
+const updateCounter = async (type, value) => {
+    if(!value) return
+
+    const ttl = Math.floor(Date.now() / 1000) + 86400 * 7
+    await dynamodb.send(
+        new UpdateCommand({
+            TableName: TABLE_NAME,
+            KEY: {
+                PK: `COUNTER#${type}`,
+                SK: value
+            },
+            UpdateExpression: "ADD #count :inc SET #ttl = :ttl",
+            ExpressionAttributeNames: { "#count": "count", "#ttl": "ttl"},
+            ExpressionAttributeValues: { ":inc": 1, ":ttl": ttl}
         })
     )
 }
