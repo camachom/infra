@@ -1,6 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb"
-import UAParser from "ua-parser-js"
+import { UAParser } from 'ua-parser-js'
 
 import { FirehoseClient, PutRecordCommand } from "@aws-sdk/client-firehose"
 
@@ -157,7 +157,7 @@ const updateCounter = async (type, value) => {
     await dynamodb.send(
         new UpdateCommand({
             TableName: TABLE_NAME,
-            KEY: {
+            Key: {
                 PK: `COUNTER#${type}`,
                 SK: value
             },
