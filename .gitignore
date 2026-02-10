@@ -22,3 +22,5 @@ override.tf.json
 
 # Lock file (see note below)
 # .terraform.lock.hcl
+
+*/node_modules
