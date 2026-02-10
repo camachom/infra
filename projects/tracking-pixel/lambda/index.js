@@ -1,7 +1,13 @@
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
+import { DynamoDBDocumentClient, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb"
+
 import { FirehoseClient, PutRecordCommand } from "@aws-sdk/client-firehose"
 
 const firehose = new FirehoseClient({})
 const STREAM_NAME = process.env.FIREHOSE_STREAM_NAME
+
+const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}))
+const TABLE_NAME = process.env.DYNAMODB_TABLE
 
 // 1x1 transparent GIF
 const PIXEL = Buffer.from(
@@ -37,14 +43,10 @@ export const handler = async (event) => {
         payload
     }
 
-    await firehose.send(
-        new PutRecordCommand({
-            DeliveryStreamName: STREAM_NAME,
-            Record: {
-                Data: Buffer.from(JSON.stringify(record) + "\n")
-            }
-        })
-    )
+    await Promise.all([
+        putFirehose(record),
+        updateStats(record)
+    ])
 
     if (isPixel) {
         return {
@@ -59,4 +61,74 @@ export const handler = async (event) => {
     }
 
     return { statusCode: 202, body: "" }
+}
+
+const putFirehose = async (record) => {
+    await firehose.send(
+        new PutRecordCommand({
+            DeliveryStreamName: STREAM_NAME,
+            Record: {
+                Data: Buffer.from(JSON.stringify(record) + "\n")
+            }
+        })
+    )
+}
+
+const updateStats = async (record) => {
+    const promises = [updateDailyCounter(), addEvent(record)]
+    if (record.referer) {
+        promises.push(updatePageCounter(record))
+    }
+    await Promise.allSettled(promises)
+}
+
+const updateDailyCounter = async () => {
+    const ttl = Math.floor(Date.now() / 1000) + 86400 * 7
+    const today = new Date().toISOString().split('T').at(0)
+
+    await dynamodb.send(
+        new UpdateCommand({
+            TableName: TABLE_NAME,
+            Key: {
+                PK: "COUNTER#daily",
+                SK: today
+            },
+            UpdateExpression: "ADD #count :inc SET #ttl = :ttl",
+            ExpressionAttributeNames: { "#count": "count", "#ttl": "ttl" },
+            ExpressionAttributeValues: { ":inc": 1, ":ttl": ttl }
+        })
+    )
+}
+
+const updatePageCounter = async (record) => {
+    const ttl = Math.floor(Date.now() / 1000) + 86400 * 7
+
+    await dynamodb.send(
+        new UpdateCommand({
+            TableName: TABLE_NAME,
+            Key: {
+                PK: "COUNTER#page",
+                SK: record.referer
+            },
+            UpdateExpression: "ADD #count :inc SET #ttl = :ttl",
+            ExpressionAttributeNames: { "#count": "count", "#ttl": "ttl" },
+            ExpressionAttributeValues: { ":inc": 1, ":ttl": ttl },
+        })
+    )
+}
+
+const addEvent = async (record) => {
+    const ttl = Math.floor(Date.now() / 1000) + 86400 * 7
+
+    await dynamodb.send(
+        new PutCommand({
+            TableName: TABLE_NAME,
+            Item: {
+                PK: "EVENT#recent",
+                SK: `${record.ts}/${record.requestId}`,
+                ...record,
+                ttl: ttl
+            },
+        })
+    )
 }
