@@ -1,14 +1,8 @@
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
-import { DynamoDBDocumentClient, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb"
+import { KinesisClient, PutRecordCommand } from "@aws-sdk/client-kinesis"
 import { UAParser } from 'ua-parser-js'
 
-import { FirehoseClient, PutRecordCommand } from "@aws-sdk/client-firehose"
-
-const firehose = new FirehoseClient({})
-const STREAM_NAME = process.env.FIREHOSE_STREAM_NAME
-
-const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}))
-const TABLE_NAME = process.env.DYNAMODB_TABLE
+const kinesis = new KinesisClient({})
+const STREAM_NAME = process.env.KINESIS_STREAM_NAME
 
 // 1x1 transparent GIF
 const PIXEL = Buffer.from(
@@ -47,16 +41,13 @@ export const handler = async (event) => {
     try {
         const ua = new UAParser(record.ua)
         record.browser = ua.getBrowser()?.name || 'Unknown'
-        record.device = ua.getDevice()?.type || 'Unknown'
+        record.device = ua.getDevice()?.type || 'Desktop'
         record.os = ua.getOS()?.name || 'Unknown'
     } catch (err) {
         console.warn("UAParser failed", { ua: record.ua, error: err?.message, requestId: record.requestId })
     }
 
-    await Promise.all([
-        putFirehose(record),
-        updateStats(record)
-    ])
+    await putKinesis(record)
 
     if (isPixel) {
         return {
@@ -73,97 +64,12 @@ export const handler = async (event) => {
     return { statusCode: 202, body: "" }
 }
 
-const putFirehose = async (record) => {
-    await firehose.send(
+const putKinesis = async (record) => {
+    await kinesis.send(
         new PutRecordCommand({
-            DeliveryStreamName: STREAM_NAME,
-            Record: {
-                Data: Buffer.from(JSON.stringify(record) + "\n")
-            }
-        })
-    )
-}
-
-const updateStats = async (record) => {
-    const promises = [
-        updateDailyCounter(),
-        addEvent(record),
-        updateCounter('os', record.os),
-        updateCounter('browser', record.browser),
-        updateCounter('device', record.device),
-    ]
-
-    if (record.referer) {
-        promises.push(updatePageCounter(record))
-    }
-    await Promise.allSettled(promises)
-}
-
-const updateDailyCounter = async () => {
-    const ttl = Math.floor(Date.now() / 1000) + 86400 * 7
-    const today = new Date().toISOString().split('T').at(0)
-
-    await dynamodb.send(
-        new UpdateCommand({
-            TableName: TABLE_NAME,
-            Key: {
-                PK: "COUNTER#daily",
-                SK: today
-            },
-            UpdateExpression: "ADD #count :inc SET #ttl = :ttl",
-            ExpressionAttributeNames: { "#count": "count", "#ttl": "ttl" },
-            ExpressionAttributeValues: { ":inc": 1, ":ttl": ttl }
-        })
-    )
-}
-
-const updatePageCounter = async (record) => {
-    const ttl = Math.floor(Date.now() / 1000) + 86400 * 7
-
-    await dynamodb.send(
-        new UpdateCommand({
-            TableName: TABLE_NAME,
-            Key: {
-                PK: "COUNTER#page",
-                SK: record.referer
-            },
-            UpdateExpression: "ADD #count :inc SET #ttl = :ttl",
-            ExpressionAttributeNames: { "#count": "count", "#ttl": "ttl" },
-            ExpressionAttributeValues: { ":inc": 1, ":ttl": ttl },
-        })
-    )
-}
-
-const addEvent = async (record) => {
-    const ttl = Math.floor(Date.now() / 1000) + 86400 * 7
-
-    await dynamodb.send(
-        new PutCommand({
-            TableName: TABLE_NAME,
-            Item: {
-                PK: "EVENT#recent",
-                SK: `${record.ts}/${record.requestId}`,
-                ...record,
-                ttl: ttl
-            },
-        })
-    )
-}
-
-const updateCounter = async (type, value) => {
-    if(!value) return
-
-    const ttl = Math.floor(Date.now() / 1000) + 86400 * 7
-    await dynamodb.send(
-        new UpdateCommand({
-            TableName: TABLE_NAME,
-            Key: {
-                PK: `COUNTER#${type}`,
-                SK: value
-            },
-            UpdateExpression: "ADD #count :inc SET #ttl = :ttl",
-            ExpressionAttributeNames: { "#count": "count", "#ttl": "ttl"},
-            ExpressionAttributeValues: { ":inc": 1, ":ttl": ttl}
+            StreamName: STREAM_NAME,
+            PartitionKey: record.requestId,
+            Data: Buffer.from(JSON.stringify(record))
         })
     )
 }

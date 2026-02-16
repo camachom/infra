@@ -76,7 +76,7 @@
 <body>
     <div class="container">
         <h1>Tracking Pixel</h1>
-        <p class="subtitle">Serverless event tracking with Lambda, Firehose, DynamoDB, and S3</p>
+        <p class="subtitle">Serverless event tracking with Lambda, Kinesis, DynamoDB, and S3</p>
 
         <div class="card">
             <h2>Tracking Pixel</h2>
@@ -109,9 +109,9 @@
         <div class="card">
             <h2>How It Works</h2>
             <p style="line-height: 1.7;">
-                <strong>Ingest:</strong> API Gateway → Lambda → Firehose + DynamoDB<br>
+                <strong>Ingest:</strong> API Gateway → Lambda → Kinesis<br>
+                <strong>Consumer:</strong> Kinesis → Lambda → S3 + DynamoDB (batched)<br>
                 <strong>Storage:</strong> S3 (gzipped, partitioned by hour)<br>
-                <strong>Real-time:</strong> DynamoDB atomic counters<br>
             </p>
             <p style="margin-top: 1rem;"><a href="/dashboard">View Dashboard →</a></p>
         </div>

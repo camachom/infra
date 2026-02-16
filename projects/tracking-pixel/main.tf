@@ -11,63 +11,14 @@ resource "aws_s3_bucket_public_access_block" "events" {
   restrict_public_buckets = true
 }
 
-#firehose
-resource "aws_iam_role" "firehose" {
-  name = "${local.name}-firehose-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "firehose.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
+#kinesis
+resource "aws_kinesis_stream" "events" {
+  name             = "${local.name}-events"
+  shard_count      = 1
+  retention_period = 24
 
-resource "aws_iam_role_policy" "firehose" {
-  name = "${local.name}-firehose-policy"
-  role = aws_iam_role.firehose.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:AbortMultipartUpload",
-          "s3:GetBucketLocation",
-          "s3:GetObject",
-          "s3:ListBucket",
-          "s3:ListBucketMultipartUploads",
-          "s3:PutObject"
-        ]
-        Resource = [
-          aws_s3_bucket.events.arn,
-          "${aws_s3_bucket.events.arn}/*"
-        ]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["logs:PutLogEvents"]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-resource "aws_kinesis_firehose_delivery_stream" "events" {
-  name        = "${local.name}-events"
-  destination = "extended_s3"
-
-  extended_s3_configuration {
-    role_arn   = aws_iam_role.firehose.arn
-    bucket_arn = aws_s3_bucket.events.arn
-
-    prefix              = "events/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/"
-    error_output_prefix = "errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"
-
-    buffering_size     = 5
-    buffering_interval = 60
-    compression_format = "GZIP"
+  stream_mode_details {
+    stream_mode = "PROVISIONED"
   }
 }
 
@@ -94,8 +45,8 @@ resource "aws_iam_role_policy" "lambda" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = ["firehose:PutRecord", "firehose:PutRecordBatch"]
-        Resource = aws_kinesis_firehose_delivery_stream.events.arn
+        Action   = ["kinesis:PutRecord"]
+        Resource = aws_kinesis_stream.events.arn
       },
       {
         Effect = "Allow"
@@ -105,14 +56,6 @@ resource "aws_iam_role_policy" "lambda" {
           "logs:PutLogEvents"
         ]
         Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "dynamodb:UpdateItem",
-          "dynamodb:PutItem"
-        ],
-        Resource = aws_dynamodb_table.stats.arn
       }
     ]
   })
@@ -132,10 +75,78 @@ resource "aws_lambda_function" "ingest" {
 
   environment {
     variables = {
-      FIREHOSE_STREAM_NAME = aws_kinesis_firehose_delivery_stream.events.name
-      DYNAMODB_TABLE       = aws_dynamodb_table.stats.name
+      KINESIS_STREAM_NAME = aws_kinesis_stream.events.name
     }
   }
+}
+
+#lambda-consumer
+resource "aws_iam_role" "lambda_consumer" {
+  name = "${local.name}-lambda-consumer-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "lambda_consumer" {
+  name = "${local.name}-lambda-consumer-policy"
+  role = aws_iam_role.lambda_consumer.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["kinesis:GetRecords", "kinesis:GetShardIterator", "kinesis:DescribeStream", "kinesis:ListShards"]
+        Resource = aws_kinesis_stream.events.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "${aws_s3_bucket.events.arn}/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem", "dynamodb:PutItem", "dynamodb:BatchWriteItem"]
+        Resource = aws_dynamodb_table.stats.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_function" "consumer" {
+  function_name    = "${local.name}-consumer"
+  role             = aws_iam_role.lambda_consumer.arn
+  handler          = "consumer.handler"
+  runtime          = "nodejs24.x"
+  timeout          = 60
+  memory_size      = 256
+  filename         = "./lambda.zip"
+  source_code_hash = filebase64sha256("./lambda.zip")
+
+  environment {
+    variables = {
+      S3_BUCKET      = aws_s3_bucket.events.id
+      DYNAMODB_TABLE = aws_dynamodb_table.stats.name
+    }
+  }
+}
+
+resource "aws_lambda_event_source_mapping" "kinesis" {
+  event_source_arn                   = aws_kinesis_stream.events.arn
+  function_name                      = aws_lambda_function.consumer.arn
+  starting_position                  = "LATEST"
+  batch_size                         = 100
+  maximum_batching_window_in_seconds = 5
 }
 
 #http
@@ -175,6 +186,11 @@ resource "aws_apigatewayv2_stage" "prod" {
   api_id      = aws_apigatewayv2_api.tracker.id
   name        = "$default"
   auto_deploy = true
+
+  default_route_settings {
+    throttling_burst_limit = 2000
+    throttling_rate_limit  = 1000
+  }
 }
 
 #dynamodb
