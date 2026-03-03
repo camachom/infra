@@ -76,14 +76,30 @@ const updateDynamoDB = async (records) => {
         }
     }
 
-    // Store recent events (last few from batch for dashboard)
-    const recentEvents = records.slice(-5)
-    for (const record of recentEvents) {
+    // Store recent events split by type (pixel vs custom)
+    const pixelEvents = records.filter(r => r.path === "/p.gif").slice(-5)
+    const customEvents = records.filter(r => r.path !== "/p.gif").slice(-5)
+
+    for (const record of pixelEvents) {
         updates.push(
             dynamodb.send(new PutCommand({
                 TableName: TABLE_NAME,
                 Item: {
-                    PK: "EVENT#recent",
+                    PK: "EVENT#pixel",
+                    SK: `${record.ts}/${record.requestId}`,
+                    ...record,
+                    ttl
+                }
+            }))
+        )
+    }
+
+    for (const record of customEvents) {
+        updates.push(
+            dynamodb.send(new PutCommand({
+                TableName: TABLE_NAME,
+                Item: {
+                    PK: "EVENT#custom",
                     SK: `${record.ts}/${record.requestId}`,
                     ...record,
                     ttl

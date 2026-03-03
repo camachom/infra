@@ -60,7 +60,16 @@ async function serveStats() {
             new QueryCommand({
                 TableName: TABLE_NAME,
                 KeyConditionExpression: "PK = :pk",
-                ExpressionAttributeValues: { ":pk": "EVENT#recent" },
+                ExpressionAttributeValues: { ":pk": "EVENT#pixel" },
+                ScanIndexForward: false,
+                Limit: 10,
+            })
+        ),
+        dynamodb.send(
+            new QueryCommand({
+                TableName: TABLE_NAME,
+                KeyConditionExpression: "PK = :pk",
+                ExpressionAttributeValues: { ":pk": "EVENT#custom" },
                 ScanIndexForward: false,
                 Limit: 10,
             })
@@ -90,9 +99,10 @@ async function serveStats() {
         body: JSON.stringify({
             dailyCount: results[0].Item?.count ?? 0,
             topPages: sortByCount(results[1].Items).slice(0, 5),
-            recentEvents: results[2].Items ?? [],
-            browsers: sortByCount(results[3].Items).slice(0, 5),
-            devices: sortByCount(results[4].Items),
+            recentPixelEvents: results[2].Items ?? [],
+            recentCustomEvents: results[3].Items ?? [],
+            browsers: sortByCount(results[4].Items).slice(0, 5),
+            devices: sortByCount(results[5].Items),
         })
     }
 }

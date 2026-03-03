@@ -73,10 +73,18 @@
             </div>
 
             <div class="card full">
-                <h2>Recent Events</h2>
+                <h2>Recent Pixel Events</h2>
                 <table>
-                    <thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Browser</th><th>Device</th></tr></thead>
-                    <tbody id="recentEvents"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+                    <thead><tr><th>Time</th><th>Page</th><th>Browser</th><th>Device</th></tr></thead>
+                    <tbody id="recentPixelEvents"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+                </table>
+            </div>
+
+            <div class="card full">
+                <h2>Recent Custom Events</h2>
+                <table>
+                    <thead><tr><th>Time</th><th>Payload</th></tr></thead>
+                    <tbody id="recentCustomEvents"><tr><td colspan="2" class="muted">Loading...</td></tr></tbody>
                 </table>
             </div>
         </div>
@@ -110,16 +118,27 @@
                 renderTable('devices', d.devices || [], 'SK');
                 renderTable('topPages', d.topPages || [], 'SK');
 
-                const events = document.getElementById('recentEvents');
-                events.innerHTML = (d.recentEvents || []).length
-                    ? d.recentEvents.map(e =>
+                const pixelEl = document.getElementById('recentPixelEvents');
+                const pixelEvents = d.recentPixelEvents || [];
+                pixelEl.innerHTML = pixelEvents.length
+                    ? pixelEvents.map(e =>
                         '<tr><td>' + new Date(e.ts).toLocaleTimeString() + '</td>' +
-                        '<td>' + (e.method || '-') + '</td>' +
-                        '<td>' + (e.path || '-') + '</td>' +
+                        '<td class="truncate">' + (e.referer || '-') + '</td>' +
                         '<td>' + (e.browser || '-') + '</td>' +
                         '<td>' + (e.device || '-') + '</td></tr>'
                     ).join('')
-                    : '<tr><td colspan="5" class="muted">No events</td></tr>';
+                    : '<tr><td colspan="4" class="muted">No events</td></tr>';
+
+                const customEl = document.getElementById('recentCustomEvents');
+                const customEvents = d.recentCustomEvents || [];
+                customEl.innerHTML = customEvents.length
+                    ? customEvents.map(e => {
+                        const { PK, SK, ttl, ts, requestId, ...payload } = e;
+                        const pairs = Object.entries(payload).map(([k,v]) => '<b>' + k + ':</b> ' + v).join(', ');
+                        return '<tr><td>' + new Date(ts).toLocaleTimeString() + '</td>' +
+                            '<td>' + (pairs || '-') + '</td></tr>';
+                    }).join('')
+                    : '<tr><td colspan="2" class="muted">No events</td></tr>';
             } catch (e) {
                 console.error(e);
             }
