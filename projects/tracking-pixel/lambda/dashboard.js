@@ -11,7 +11,6 @@ const dashboardHtml = readFileSync(join(__dirname, 'templates/dashboard.html'), 
 
 const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 const TABLE_NAME = process.env.DYNAMODB_TABLE
-const API_ENDPOINT = process.env.API_ENDPOINT
 
 export const handler = async (event) => {
     const path = event?.requestContext?.http?.path
@@ -20,7 +19,7 @@ export const handler = async (event) => {
         case "/":
             return { statusCode: 302, headers: { Location: "/demo" } }
         case "/demo":
-            return html(demoHtml.replaceAll('{{API_ENDPOINT}}', API_ENDPOINT))
+            return html(demoHtml)
         case "/dashboard":
             return html(dashboardHtml)
         case "/api/stats":

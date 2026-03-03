@@ -314,7 +314,6 @@ resource "aws_lambda_function" "dashboard" {
 
   environment {
     variables = {
-      API_ENDPOINT   = aws_apigatewayv2_api.tracker.api_endpoint
       DYNAMODB_TABLE = aws_dynamodb_table.stats.name
     }
   }

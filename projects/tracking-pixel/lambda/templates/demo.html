@@ -82,7 +82,7 @@
             <h2>Tracking Pixel</h2>
             <div class="pixel-demo">
                 <div class="pixel-box">
-                    <img src="{{API_ENDPOINT}}/p.gif?page=demo" width="1" height="1" id="pixel" />
+                    <img src="/p.gif?page=demo" width="1" height="1" id="pixel" />
                     1x1
                 </div>
                 <p>This transparent GIF triggers an event on load.</p>
@@ -109,16 +109,16 @@
         <div class="card">
             <h2>How It Works</h2>
             <p style="line-height: 1.7;">
-                <strong>Ingest:</strong> API Gateway → Lambda → Kinesis<br>
+                <strong>Pixel:</strong> API Gateway → Lambda → Kinesis (fire-and-forget)<br>
+                <strong>Events:</strong> API Gateway → Kinesis (direct, no Lambda)<br>
                 <strong>Consumer:</strong> Kinesis → Lambda → S3 + DynamoDB (batched)<br>
-                <strong>Storage:</strong> S3 (gzipped, partitioned by hour)<br>
             </p>
             <p style="margin-top: 1rem;"><a href="/dashboard">View Dashboard →</a></p>
         </div>
     </div>
 
     <script>
-        const API = '{{API_ENDPOINT}}';
+        const API = '';
         let pixelCount = 1;
         const log = document.getElementById('eventLog');
 
