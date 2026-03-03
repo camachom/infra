@@ -155,6 +155,48 @@ resource "aws_apigatewayv2_api" "tracker" {
   protocol_type = "HTTP"
 }
 
+# IAM role for API Gateway → Kinesis direct integration
+resource "aws_iam_role" "apigw_kinesis" {
+  name = "${local.name}-apigw-kinesis-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "apigateway.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "apigw_kinesis" {
+  name = "${local.name}-apigw-kinesis-policy"
+  role = aws_iam_role.apigw_kinesis.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["kinesis:PutRecord"]
+      Resource = aws_kinesis_stream.events.arn
+    }]
+  })
+}
+
+# POST /e → Kinesis direct (no Lambda)
+resource "aws_apigatewayv2_integration" "kinesis" {
+  api_id              = aws_apigatewayv2_api.tracker.id
+  integration_type    = "AWS_PROXY"
+  integration_subtype = "Kinesis-PutRecord"
+  credentials_arn     = aws_iam_role.apigw_kinesis.arn
+
+  request_parameters = {
+    StreamName   = aws_kinesis_stream.events.name
+    Data         = "$request.body"
+    PartitionKey = "$context.requestId"
+  }
+}
+
+# GET /p.gif → Lambda (returns GIF + enriches record)
+# Kept as "lambda" to avoid destroy/recreate of the existing integration
 resource "aws_apigatewayv2_integration" "lambda" {
   api_id                 = aws_apigatewayv2_api.tracker.id
   integration_type       = "AWS_PROXY"
@@ -171,7 +213,7 @@ resource "aws_apigatewayv2_route" "pixel" {
 resource "aws_apigatewayv2_route" "event" {
   api_id    = aws_apigatewayv2_api.tracker.id
   route_key = "POST /e"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.kinesis.id}"
 }
 
 resource "aws_lambda_permission" "apigw" {

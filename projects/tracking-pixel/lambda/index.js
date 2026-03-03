@@ -11,31 +11,15 @@ const PIXEL = Buffer.from(
 )
 
 export const handler = async (event) => {
-    const method = event?.requestContext?.http?.method
-    const isPixel = method === "GET"
-
-    let payload = null
-    if (!isPixel && event.body) {
-        const body = event.isBase64Encoded
-            ? Buffer.from(event.body, "base64").toString("utf8")
-            : event.body
-        try {
-            payload = JSON.parse(body)
-        } catch {
-            payload = body
-        }
-    }
-
     const record = {
         ts: new Date().toISOString(),
         requestId: event?.requestContext?.requestId,
-        method,
+        method: "GET",
         path: event?.requestContext?.http?.path,
         ip: event?.requestContext?.http?.sourceIp,
         ua: event?.headers?.["user-agent"],
         referer: event?.headers?.["referer"],
         query: event?.queryStringParameters,
-        payload
     }
 
     try {
@@ -47,21 +31,20 @@ export const handler = async (event) => {
         console.warn("UAParser failed", { ua: record.ua, error: err?.message, requestId: record.requestId })
     }
 
-    await putKinesis(record)
+    // Fire-and-forget: don't await the Kinesis put before returning the GIF
+    putKinesis(record).catch((err) => {
+        console.error("Kinesis PutRecord failed", { error: err?.message, requestId: record.requestId })
+    })
 
-    if (isPixel) {
-        return {
-            statusCode: 200,
-            headers: {
-                "Content-Type": "image/gif",
-                "Cache-Control": "no-store, no-cache, must-revalidate, private"
-            },
-            body: PIXEL.toString("base64"),
-            isBase64Encoded: true
-        }
+    return {
+        statusCode: 200,
+        headers: {
+            "Content-Type": "image/gif",
+            "Cache-Control": "no-store, no-cache, must-revalidate, private"
+        },
+        body: PIXEL.toString("base64"),
+        isBase64Encoded: true
     }
-
-    return { statusCode: 202, body: "" }
 }
 
 const putKinesis = async (record) => {
