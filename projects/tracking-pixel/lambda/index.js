@@ -31,10 +31,7 @@ export const handler = async (event) => {
         console.warn("UAParser failed", { ua: record.ua, error: err?.message, requestId: record.requestId })
     }
 
-    // Fire-and-forget: don't await the Kinesis put before returning the GIF
-    putKinesis(record).catch((err) => {
-        console.error("Kinesis PutRecord failed", { error: err?.message, requestId: record.requestId })
-    })
+    await putKinesis(record)
 
     return {
         statusCode: 200,
