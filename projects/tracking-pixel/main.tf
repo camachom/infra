@@ -316,3 +316,89 @@ resource "aws_lambda_permission" "apigw_dashboard" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.tracker.execution_arn}/*/*"
 }
+
+#custom domain
+
+# Step 1: Look up the existing hosted zone for vs.computer in Route 53.
+# This doesn't create anything — it just fetches the zone ID so we can
+# add DNS records to it in later steps.
+data "aws_route53_zone" "domain" {
+  name = "vs.computer"
+}
+
+# Step 2: Request an SSL certificate for track.vs.computer.
+# API Gateway requires HTTPS, so we need a valid cert.
+# "DNS validation" means ACM will give us a CNAME record to prove we own the domain.
+resource "aws_acm_certificate" "tracker" {
+  domain_name       = "track.vs.computer"
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Step 3a: Create the DNS record that proves we own track.vs.computer.
+# ACM gives us a specific CNAME to add (like the _57ecfe... record Amplify created).
+# This uses for_each because ACM could request multiple validation records
+# (e.g., if the cert covered multiple domains). For us it's just one.
+resource "aws_route53_record" "cert_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.tracker.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  zone_id = data.aws_route53_zone.domain.zone_id
+  name    = each.value.name
+  type    = each.value.type
+  records = [each.value.record]
+  ttl     = 60
+}
+
+# Step 3b: Wait for ACM to verify the DNS record and activate the cert.
+# Terraform will pause here until validation completes (usually ~1-2 minutes).
+resource "aws_acm_certificate_validation" "tracker" {
+  certificate_arn         = aws_acm_certificate.tracker.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
+
+# Step 4a: Tell API Gateway "accept requests for track.vs.computer".
+# This is like registering a custom domain in CloudFront — without this,
+# API Gateway would reject requests with Host: track.vs.computer.
+# We attach the SSL cert so it can serve HTTPS.
+resource "aws_apigatewayv2_domain_name" "tracker" {
+  domain_name = "track.vs.computer"
+
+  domain_name_configuration {
+    certificate_arn = aws_acm_certificate_validation.tracker.certificate_arn
+    endpoint_type   = "REGIONAL"
+    security_policy = "TLS_1_2"
+  }
+}
+
+# Step 4b: Map the custom domain to your existing API and stage.
+# This connects track.vs.computer to the same routes (/p.gif, /dashboard, etc.)
+# that the auto-generated URL already serves.
+resource "aws_apigatewayv2_api_mapping" "tracker" {
+  api_id      = aws_apigatewayv2_api.tracker.id
+  domain_name = aws_apigatewayv2_domain_name.tracker.id
+  stage       = aws_apigatewayv2_stage.prod.id
+}
+
+# Step 5: Point track.vs.computer at API Gateway.
+# This is an alias A record — Route 53 resolves the API Gateway's regional
+# endpoint internally and returns the IPs directly to the browser (one lookup).
+resource "aws_route53_record" "tracker" {
+  zone_id = data.aws_route53_zone.domain.zone_id
+  name    = "track.vs.computer"
+  type    = "A"
+
+  alias {
+    name                   = aws_apigatewayv2_domain_name.tracker.domain_name_configuration[0].target_domain_name
+    zone_id                = aws_apigatewayv2_domain_name.tracker.domain_name_configuration[0].hosted_zone_id
+    evaluate_target_health = false
+  }
+}

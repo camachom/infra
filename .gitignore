@@ -26,3 +26,5 @@ override.tf.json
 **/node_modules/
 
 *.zip
+
+.playwright-mcp/
